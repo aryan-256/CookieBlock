@@ -170,121 +170,142 @@ const maybeDateContent = function(cookieContent) {
 }
 
 
-// Object that stores all the feature setup functions. These initialize the objects for the above variables.
-// Which functions are executed on startup is determined by the feature config.
+// Object that stores all the feature setup functions.
+// Each function is now async and uses fetchExtensionJSON() / fetch() instead
+// of the XHR-based getExtensionFile(). They return a Promise that resolves
+// once their resource is fully loaded and the corresponding global is populated.
+// Which functions are executed is determined by the feature config in features.json.
 const setupFunctions = {
-    "setup_top_names": (source, vector_size, args) => {
+    "setup_top_names": async (source, vector_size, args) => {
         top_names = {};
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            if (lines.length < vector_size){
-                console.warn("Warning: Top cookie names resource is exhausted!");
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_top_names: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        if (lines.length < vector_size) {
+            console.warn("Warning: Top cookie names resource is exhausted!");
+        }
+        for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
+            let l = lines[i];
+            if (lines[i]) {
+                top_names[l.split(',')[1]] = i;
             }
-            for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
-                let l = lines[i];
-                if (lines[i]) {
-                    top_names[l.split(',')[1]] = i;
-                }
-            }
-        });
+        }
     },
-    "setup_top_domains": (source, vector_size, args) => {
+    "setup_top_domains": async (source, vector_size, args) => {
         top_domains = {};
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            if (lines.length < vector_size){
-                console.warn("Warning: Top domain names resource is exhausted!");
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_top_domains: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        if (lines.length < vector_size) {
+            console.warn("Warning: Top domain names resource is exhausted!");
+        }
+        for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
+            let l = lines[i];
+            if (lines[i]) {
+                top_domains[l.split(',')[1]] = i;
             }
-            for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
-                let l = lines[i];
-                if (lines[i]) {
-                    top_domains[l.split(',')[1]] = i;
-                }
-            }
-        });
+        }
     },
-    "setup_name_features": (source, vector_size, args) => {
+    "setup_name_features": async (source, vector_size, args) => {
         name_tokens = [];
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            if (lines.length < vector_size){
-                console.warn("Warning: Name tokens resource is exhausted!");
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_name_features: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        if (lines.length < vector_size) {
+            console.warn("Warning: Name tokens resource is exhausted!");
+        }
+        for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
+            let l = lines[i];
+            if (lines[i]) {
+                name_tokens.push(new RegExp(l.split(',')[1]));
             }
-            for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
-                let l = lines[i];
-                if (lines[i]) {
-                    name_tokens.push(new RegExp(l.split(',')[1]));
-                }
-            }
-        });
+        }
     },
-    "setup_content_terms": (source, vector_size, args) => {
+    "setup_content_terms": async (source, vector_size, args) => {
         content_terms = [];
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            if (lines.length < vector_size){
-                console.warn("Warning: Content terms resource is exhausted!");
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_content_terms: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        if (lines.length < vector_size) {
+            console.warn("Warning: Content terms resource is exhausted!");
+        }
+        for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
+            let l = lines[i];
+            if (lines[i]) {
+                content_terms.push(new RegExp(l.split(',')[1], 'i'));
             }
-            for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
-                let l = lines[i];
-                if (lines[i]) {
-                    content_terms.push(new RegExp(l.split(',')[1], 'i'));
-                }
-            }
-        });
+        }
     },
-    "setup_pattern_names": (source, vector_size, args) => {
+    "setup_pattern_names": async (source, vector_size, args) => {
         pattern_names = [];
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            if (lines.length < vector_size){
-                console.warn("Warning: Pattern names resource is exhausted!");
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_pattern_names: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        if (lines.length < vector_size) {
+            console.warn("Warning: Pattern names resource is exhausted!");
+        }
+        for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
+            let l = lines[i];
+            if (lines[i]) {
+                pattern_names.push(new RegExp(l.split(',')[3]));
             }
-            for (let i = 0; i < Math.min(lines.length, vector_size); i++) {
-                let l = lines[i];
-                if (lines[i]) {
-                    pattern_names.push(new RegExp(l.split(',')[3]));
-                }
-            }
-        });
+        }
     },
-    "setup_iabeurope_vendors": (source, vector_size, args) => {
+    "setup_iabeurope_vendors": async (source, vector_size, args) => {
         iabeurope_vendors = new Set();
-        getExtensionFile(chrome.runtime.getURL(source), "text", (resp) => {
-            let lines = resp.split('\n');
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i]) {
-                    iabeurope_vendors.add(urlToUniformDomain(lines[i]));
-                }
+        const resp = await fetch(chrome.runtime.getURL(source));
+        if (!resp.ok) throw new Error(`setup_iabeurope_vendors: HTTP ${resp.status} for ${source}`);
+        const text = await resp.text();
+        let lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i]) {
+                iabeurope_vendors.add(urlToUniformDomain(lines[i]));
             }
-        });
+        }
     }
 };
 
 
 /**
-* Callback function for when the config is loaded.
-* Sets up the configuration variable and executes the setup functions defined in features.json
-* @param {Object} fconfig   Configuration object, which defines the features to be extracted.
-*/
-const setupFeatureResourcesCallback = function(fconfig) {
+ * Async version of setupFeatureResourcesCallback.
+ * Loads features.json, sets feature_config, then awaits every enabled
+ * setup function in sequence, preserving the exact same data structure
+ * the original XHR callback chain produced.
+ *
+ * Called once by ensureInitialized() in cookieblock_sw.js.
+ *
+ * @returns {Promise<void>}
+ */
+const loadFeatureResources = async function() {
+    const fconfig = await fetchExtensionJSON(
+        chrome.runtime.getURL("/ext_data/features.json")
+    );
     feature_config = fconfig;
 
-    let maybeRunSetup = function(featArray) {
+    const maybeRunSetup = async (featArray) => {
         for (const entry of featArray) {
             if (entry["enabled"] && "setup" in entry) {
-                setupFunctions[entry['setup']](entry["source"], entry["vector_size"], entry["args"])
+                await setupFunctions[entry["setup"]](
+                    entry["source"], entry["vector_size"], entry["args"]
+                );
             }
         }
     };
 
-    maybeRunSetup(feature_config["per_cookie_features"]);
-    maybeRunSetup(feature_config["per_update_features"]);
-    maybeRunSetup(feature_config["per_diff_features"]);
+    await maybeRunSetup(feature_config["per_cookie_features"]);
+    await maybeRunSetup(feature_config["per_update_features"]);
+    await maybeRunSetup(feature_config["per_diff_features"]);
+
+    console.info("CookieBlock: feature resources loaded.");
 };
 
-// retrieve the configuration
-getExtensionFile(chrome.runtime.getURL("/ext_data/features.json"), "json", setupFeatureResourcesCallback);
+// NOTE: loadFeatureResources() is called from ensureInitialized() in cookieblock_sw.js.
+// No top-level side effects remain in this file.
 
 
 // Features extracted for each unique cookie

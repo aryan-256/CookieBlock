@@ -9,36 +9,43 @@ Released under the MIT License, see included LICENSE file.
 //-------------------------------------------------------------------------------
 
 
-// initialize the forests
+// Forests are populated by loadForests(), called from ensureInitialized() in cookieblock_sw.js.
+// No top-level side effects — only the declaration lives here.
 var forests = [undefined, undefined, undefined, undefined];
 
-// Necessary Cookies Model
-getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class0_part1.json"), "json", (f1) => {
-    getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class0_part2.json"), "json", (f2) => {
-        forests[0] = f1.concat(f2);
-    });
-});
+/**
+ * Loads all 8 random-forest model JSON files and populates the `forests` array.
+ * Each class model is split into two parts; the parts are concatenated to form
+ * the full forest, matching the original nested-callback behaviour exactly.
+ *
+ * The four class models are loaded concurrently with Promise.all.
+ * Called once by ensureInitialized() in cookieblock_sw.js.
+ *
+ * @returns {Promise<void>}
+ */
+const loadForests = async function() {
+    const loadPair = async (url1, url2) => {
+        const [part1, part2] = await Promise.all([
+            fetchExtensionJSON(chrome.runtime.getURL(url1)),
+            fetchExtensionJSON(chrome.runtime.getURL(url2))
+        ]);
+        return part1.concat(part2);
+    };
 
-// Functionality Cookies Model
-getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class1_part1.json"), "json", (f1) => {
-    getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class1_part2.json"), "json", (f2) => {
-        forests[1] = f1.concat(f2);
-    });
-});
+    const [f0, f1, f2, f3] = await Promise.all([
+        loadPair("/ext_data/model/forest_class0_part1.json", "/ext_data/model/forest_class0_part2.json"),
+        loadPair("/ext_data/model/forest_class1_part1.json", "/ext_data/model/forest_class1_part2.json"),
+        loadPair("/ext_data/model/forest_class2_part1.json", "/ext_data/model/forest_class2_part2.json"),
+        loadPair("/ext_data/model/forest_class3_part1.json", "/ext_data/model/forest_class3_part2.json")
+    ]);
 
-// Analytics Cookies Model
-getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class2_part1.json"), "json", (f1) => {
-    getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class2_part2.json"), "json", (f2) => {
-        forests[2] = f1.concat(f2);
-    });
-});
+    forests[0] = f0;  // Necessary
+    forests[1] = f1;  // Functionality
+    forests[2] = f2;  // Analytics
+    forests[3] = f3;  // Advertising
 
-// Advertising Cookies Model
-getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class3_part1.json"), "json", (f1) => {
-    getExtensionFile(chrome.runtime.getURL("/ext_data/model/forest_class3_part2.json"), "json", (f2) => {
-        forests[3] = f1.concat(f2);
-    });
-});
+    console.info("CookieBlock: all forest models loaded.");
+};
 
 /**
  * Given a tree node and corresponding features, retrieve the weight from the decision tree.

@@ -67,7 +67,7 @@ const popupSetup = async function() {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         let currentURL = tabs[0].url;
         exceptionButton.textContent = addText;
-        if (currentURL.match(ignoredPages)){
+        if (!currentURL || currentURL.match(ignoredPages)){
             exceptionButton.disabled = true;
             exceptionButton.style.opacity = "0.5";
         } else {

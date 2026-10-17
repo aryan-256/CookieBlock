@@ -45,9 +45,10 @@ var knownCookies_internal = undefined;
 // key used to access the regular expression pattern in the known_cookies object
 const regexKey = "~regex;";
 
-// indexed DB for cookie history
+// IndexedDB handle for cookie history.
+// Opened (or re-opened) by openHistoryDB(), which is called from ensureInitialized()
+// in cookieblock_sw.js on every Service Worker wake-up.
 var historyDB = undefined;
-const openDBRequest = window.indexedDB.open("CookieBlockHistory", 1);
 
 
 /**
@@ -93,34 +94,43 @@ var timingsDebug = function () {
  * This function reloads the current known cookies JSON from the given paths.
  * Performs requests to remote domains to retrieve the data. Correctness is also checked.
  */
- const reloadUserKnownCookies = function(cookiePaths) {
-    if (cookiePaths.length === 0){
+const reloadUserKnownCookies = function(cookiePaths) {
+    if (cookiePaths.length === 0) {
         knownCookies_user = undefined;
     } else {
-        knownCookies_user = { "name_match": {}, "domain_match": {}, "domain_regex": {} }
+        knownCookies_user = { "name_match": {}, "domain_match": {}, "domain_regex": {} };
         for (let path of cookiePaths) {
-            getExtensionFile(path, "json", (result) => {
-                if (typeof result === "object" && result !== null && ("name_match" in result || "domain_match" in result || "domain_regex" in result)) {
-                    if ("name_match" in result) {
-                        for (let k of Object.keys(result["name_match"])) {
-                            knownCookies_user["name_match"][k] = result["name_match"][k];
+            // MV3: use fetch() instead of XHR-based getExtensionFile().
+            // fire-and-forget; errors are logged but do not block the caller.
+            fetch(path)
+                .then(r => {
+                    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+                    return r.json();
+                })
+                .then(result => {
+                    if (typeof result === "object" && result !== null &&
+                        ("name_match" in result || "domain_match" in result || "domain_regex" in result)) {
+                        if ("name_match" in result) {
+                            for (let k of Object.keys(result["name_match"])) {
+                                knownCookies_user["name_match"][k] = result["name_match"][k];
+                            }
                         }
-                    }
-                    if ("domain_match" in result) {
-                        for (let k of Object.keys(result["domain_match"])) {
-                            knownCookies_user["domain_match"][k] = result["domain_match"][k];
+                        if ("domain_match" in result) {
+                            for (let k of Object.keys(result["domain_match"])) {
+                                knownCookies_user["domain_match"][k] = result["domain_match"][k];
+                            }
                         }
-                    }
-                    if ("domain_regex" in result) {
-                        for (let k of Object.keys(result["domain_regex"])) {
-                            knownCookies_user["domain_regex"][k] = result["domain_regex"][k];
-                            knownCookies_user["domain_regex"][k][regexKey] = new RegExp(k);
+                        if ("domain_regex" in result) {
+                            for (let k of Object.keys(result["domain_regex"])) {
+                                knownCookies_user["domain_regex"][k] = result["domain_regex"][k];
+                                knownCookies_user["domain_regex"][k][regexKey] = new RegExp(k);
+                            }
                         }
+                    } else {
+                        console.error(`Stored path did not point to a valid JSON: ${path}`);
                     }
-                } else {
-                    console.error(`Stored path did not point to a valid JSON: ${path}`);
-                }
-            });
+                })
+                .catch(err => console.error(`reloadUserKnownCookies: failed to load "${path}": ${err.message}`));
         }
     }
 }
@@ -156,28 +166,46 @@ const maybeRestoreCBLKVar = async function (cValue, varName) {
     }
 }
 
-// executed if the database is new or needs to be updated
-openDBRequest.onupgradeneeded = function(event) {
-    let objectStore = event.target.result.createObjectStore("cookies");
-    objectStore.createIndex("name", "name", { unique: false });
-    objectStore.createIndex("domain", "domain", { unique: false });
-    objectStore.createIndex("path", "path", { unique: false });
-    objectStore.createIndex("label", "current_label", { unique: false });
-    console.info("Upgraded the CookieBlock history database.");
-};
+/**
+ * Opens (or re-opens) the CookieBlockHistory IndexedDB database.
+ * Returns a Promise that resolves once the connection is fully established,
+ * or rejects if the open request fails.
+ *
+ * Called from ensureInitialized() in cookieblock_sw.js on every SW wake-up.
+ * Using the bare `indexedDB` global (not `window.indexedDB`) for SW compatibility.
+ *
+ * @returns {Promise<void>}
+ */
+const openHistoryDB = function() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open("CookieBlockHistory", 1);
 
-// success will be called after upgradeneeded
-openDBRequest.onsuccess = function(ev1) {
-    console.info("Successfully connected to CookieBlock history database.");
-    historyDB = ev1.target.result;
-    historyDB.onerror = function(ev2) {
-        console.error("Database error: " + ev2.target.errorCode);
-    };
-};
+        // Runs only when the DB is first created or its version is bumped
+        req.onupgradeneeded = function(event) {
+            let objectStore = event.target.result.createObjectStore("cookies");
+            objectStore.createIndex("name", "name", { unique: false });
+            objectStore.createIndex("domain", "domain", { unique: false });
+            objectStore.createIndex("path", "path", { unique: false });
+            objectStore.createIndex("label", "current_label", { unique: false });
+            console.info("Upgraded the CookieBlock history database.");
+        };
 
-// if the connection failed
-openDBRequest.onerror = function(event) {
-    console.error(`Failed to open history database with error code: ${event.target.errorCode}`);
+        // Called after onupgradeneeded (if triggered) completes
+        req.onsuccess = function(ev1) {
+            console.info("Successfully connected to CookieBlock history database.");
+            historyDB = ev1.target.result;
+            historyDB.onerror = function(ev2) {
+                console.error("Database error: " + ev2.target.errorCode);
+            };
+            resolve();
+        };
+
+        req.onerror = function(event) {
+            const msg = `Failed to open history database: ${event.target.errorCode}`;
+            console.error(msg);
+            reject(new Error(msg));
+        };
+    });
 };
 
 
@@ -305,14 +333,16 @@ const getCurrentLabelCount = function() {
 
 
 /**
- * Reset the default values no matter what is currently stored.
- * @param {Object} resp  Default configuration
+ * Reset all default values, overriding whatever is currently in storage.
+ * MV3: uses fetchExtensionJSON() (defined in globals_sw.js) instead of the
+ * XHR-based getExtensionFile().
  */
- const overrideDefaults = function() {
-    getExtensionFile(chrome.runtime.getURL("/ext_data/default_config.json"), "json", (dfConfig) => {
-        initDefaults(dfConfig, true);
-    });
-  }
+const overrideDefaults = async function() {
+    const dfConfig = await fetchExtensionJSON(
+        chrome.runtime.getURL("/ext_data/default_config.json")
+    );
+    await initDefaults(dfConfig, true);
+}
 
 
 /**
@@ -438,14 +468,14 @@ const classifyCookie = async function(cookieDat, feature_input) {
     // Otherwise, perform prediction
     if (label === -1) {
         // Feature extraction timing
-        let startTime = window.performance.now();
+        let startTime = performance.now();
         let features = extractFeatures(feature_input);
-        recordDebugTimings(window.performance.now() - startTime, 1);
+        recordDebugTimings(performance.now() - startTime, 1);
 
         // Prediction timing
-        startTime = window.performance.now();
+        startTime = performance.now();
         label = await predictClass(features, cblk_pscale);
-        recordDebugTimings(window.performance.now() - startTime, 2);
+        recordDebugTimings(performance.now() - startTime, 2);
     } else {
         debug_Nskipped++;
     }
@@ -491,6 +521,24 @@ const makePolicyDecision = async function(cookieDat, label) {
         console.error("Continuing without exceptions.")
     }
 
+    // ── TEMP OBSERVABILITY LOG ────────────────────────────────────────────────
+    // Remove this block once classification is verified.
+    const _outcome = skipRejection
+        ? `KEPT (allowlisted — ${cName})`
+        : (!cblk_userpolicy[label]
+            ? `REMOVED (${cName})`
+            : `KEPT (policy allows ${cName})`);
+    console.log(
+        `[CBLK] %s ; %s%s | label=%d (%s) | %s`,
+        cookieDat.name,
+        ckDomain,
+        cookieDat.path !== "/" ? cookieDat.path : "",
+        label,
+        cName,
+        _outcome
+    );
+    // ── END TEMP LOG ──────────────────────────────────────────────────────────
+
     if (skipRejection) {
         console.debug(`Cookie found on allowlist for category '${cName}': '${cookieDat.name}';'${cookieDat.domain}';'${cookieDat.path}'`);
     } else if (!cblk_userpolicy[label]) {
@@ -535,7 +583,7 @@ const makePolicyDecision = async function(cookieDat, label) {
     await maybeRestoreCBLKVar(cblk_mintime, "cblk_mintime");
     await maybeRestoreCBLKVar(cblk_pause, "cblk_pause");
 
-    let startTime = window.performance.now();
+    let startTime = performance.now();
     // First, if consent is given, check if the cookie has already been stored.
     let serializedCookie, storedCookie;
     try {
@@ -556,7 +604,7 @@ const makePolicyDecision = async function(cookieDat, label) {
     }
 
     // Record debug timing for cookie retrieval
-    recordDebugTimings(window.performance.now() - startTime, 0);
+    recordDebugTimings(performance.now() - startTime, 0);
     console.assert(serializedCookie !== undefined, "Cookie object was still undefined!");
 
     // Check if the domain is contained in the allowlist
@@ -708,7 +756,7 @@ const handleInternalMessage = function(request, sender, sendResponse) {
     }
 }
 
-chrome.runtime.onMessage.addListener(handleInternalMessage);
+// NOTE: chrome.runtime.onMessage.addListener is registered in cookieblock_sw.js
 
 
 /**
@@ -761,39 +809,8 @@ chrome.runtime.onMessage.addListener(handleInternalMessage);
     }
 }
 
-chrome.storage.onChanged.addListener(updateStorageVars);
-
-// Load the default configuration
-getExtensionFile(chrome.runtime.getURL("/ext_data/default_config.json"), "json", (dConfig) => {
-    initDefaults(dConfig, false)
-});
-
-// Load the cookie exceptions
-getExtensionFile(chrome.runtime.getURL("/ext_data/known_cookies.json"), "json", (result) => {
-    for (let k of Object.keys(result["domain_regex"])) {
-        result["domain_regex"][k][regexKey] = new RegExp(k);
-    }
-    knownCookies_internal = result;
-});
-
-/**
-* Listener that is executed any time a cookie is added, updated or removed.
-* Classifies the cookie and rejects it based on user policy.
-* @param {Object} changeInfo  Contains the cookie itself, and cause info.
-*/
-chrome.cookies.onChanged.addListener((changeInfo) => {
-    //console.log(changeInfo);
-    if (!changeInfo.removed) {
-        handleCookie(changeInfo.cookie, true, false);
-    }
-});
-
-/**
- * Listener function that opens the first time setup when the extension is installed.
- * @param {Object} details Contains the reason for the change.
- */
-chrome.runtime.onInstalled.addListener((details) => {
-    if (details.reason === "install") {
-        chrome.tabs.create({"active": true, "url": "/options/cookieblock_setup.html"});
-    }
-});
+// NOTE: All top-level event listener registrations and data-loading calls
+// (chrome.storage.onChanged, chrome.cookies.onChanged, chrome.runtime.onMessage,
+// chrome.runtime.onInstalled, and loading of default_config.json /
+// known_cookies.json) have been moved to cookieblock_sw.js (the MV3 Service
+// Worker entry point) and to ensureInitialized() therein.
