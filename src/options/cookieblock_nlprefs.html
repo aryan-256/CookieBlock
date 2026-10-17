@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<!--
+Copyright (C) 2021-2022 Dino Bollinger, ETH Zürich, Information Security Group
+
+This file is part of CookieBlock.
+
+Released under the MIT License, see included LICENSE file.
+-->
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CookieBlock — AI Cookie Preferences</title>
+    <link rel="stylesheet" href="cookieblock_options.css">
+    <style>
+        /* ── NL-prefs-specific styles ───────────────────────────────────── */
+
+        #nlprefs-textarea {
+            width: 100%;
+            min-height: 5em;
+            max-width: 100%;
+            box-sizing: border-box;
+            font-size: 1em;
+            padding: .5em;
+            border: 1px solid #aaa;
+            border-radius: 3px;
+            resize: vertical;
+        }
+
+        #nlprefs-generate-btn {
+            margin-top: .75em;
+        }
+
+        #nlprefs-loading {
+            display: inline-block;
+            margin-left: 1em;
+            font-style: italic;
+            color: #555;
+            vertical-align: middle;
+        }
+
+        /* results fieldset */
+        #nlprefs-results {
+            margin-top: 1.5em;
+        }
+
+        /* toggle badges — read-only ON/OFF display */
+        .nlprefs-toggle-row {
+            display: flex;
+            align-items: center;
+            margin-top: .75em;
+            margin-left: 1.25em;
+            gap: 1em;
+        }
+
+        .nlprefs-toggle-label {
+            font-size: larger;
+            font-weight: bold;
+            min-width: 10em;
+        }
+
+        .nlprefs-badge {
+            display: inline-block;
+            padding: .2em .7em;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 1em;
+            min-width: 3em;
+            text-align: center;
+        }
+
+        .nlprefs-badge.on {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .nlprefs-badge.off {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        /* explanation */
+        #nlprefs-explanation {
+            margin-top: 1em;
+            margin-left: 1.25em;
+            font-size: 1em;
+            font-style: italic;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        /* action buttons */
+        #nlprefs-actions {
+            margin-top: 1.5em;
+            margin-left: 1.25em;
+            display: flex;
+            gap: 1em;
+            align-items: center;
+        }
+
+        #nlprefs-apply-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #nlprefs-confirm {
+            color: green;
+            font-weight: bold;
+            font-size: 1em;
+        }
+
+        /* error / network message */
+        #nlprefs-error {
+            margin-top: .75em;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <img src="/icons/cookieblock-128.png" alt="CookieBlock logo">
+    <div class="title">
+        <h1>CookieBlock</h1>
+        <h2>AI-assisted Cookie Preferences</h2>
+    </div>
+</div>
+
+<div class="contents">
+    <div class="settings_group">
+        <fieldset>
+            <legend>Natural-Language Preferences</legend>
+            <div class="overview_description">
+                Describe your cookie preferences in plain English. The local AI model
+                will suggest which cookie categories to allow or block. Review the
+                suggestion carefully before applying &mdash; it does not take effect until
+                you click <strong>Apply</strong>.
+            </div>
+
+            <hr class="thin">
+
+            <textarea
+                id="nlprefs-textarea"
+                placeholder='e.g. "I want maximum privacy — block everything except what the site needs to work."'
+                aria-label="Describe your cookie preferences"
+            ></textarea>
+
+            <div class="submit_field">
+                <button id="nlprefs-generate-btn" type="button">Generate suggestion</button>
+                <span id="nlprefs-loading" hidden aria-live="polite">&#8987; Thinking&hellip;</span>
+            </div>
+
+            <!-- Error / network failure message -->
+            <div id="nlprefs-error" class="input-error-msg" hidden aria-live="assertive"></div>
+
+            <!-- Results area — hidden until a valid proposal is available -->
+            <fieldset id="nlprefs-results" hidden>
+                <legend>Suggested policy (preview &mdash; not yet applied)</legend>
+
+                <div class="nlprefs-toggle-row">
+                    <span class="nlprefs-toggle-label">Functionality</span>
+                    <span id="nlprefs-badge-func" class="nlprefs-badge off" aria-label="Functionality: OFF">OFF</span>
+                </div>
+
+                <div class="nlprefs-toggle-row">
+                    <span class="nlprefs-toggle-label">Analytics</span>
+                    <span id="nlprefs-badge-anal" class="nlprefs-badge off" aria-label="Analytics: OFF">OFF</span>
+                </div>
+
+                <div class="nlprefs-toggle-row">
+                    <span class="nlprefs-toggle-label">Advertising</span>
+                    <span id="nlprefs-badge-advert" class="nlprefs-badge off" aria-label="Advertising: OFF">OFF</span>
+                </div>
+
+                <div id="nlprefs-explanation"></div>
+
+                <div id="nlprefs-actions">
+                    <button id="nlprefs-apply-btn" type="button" disabled>Apply</button>
+                    <button id="nlprefs-discard-btn" type="button">Discard</button>
+                    <span id="nlprefs-confirm" hidden aria-live="polite">&#10004; Preferences applied</span>
+                </div>
+            </fieldset>
+
+        </fieldset>
+    </div>
+
+    <script type="text/javascript" src="/modules/globals.js"></script>
+    <script type="text/javascript" src="/options/cookieblock_nlprefs.js"></script>
+</div>
+</body>
+</html>
