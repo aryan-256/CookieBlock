@@ -737,6 +737,58 @@ const handleInternalMessage = function(request, sender, sendResponse) {
         }
         sendJSONResponse();
         return true;
+    } else if (request.get_site_cookies) {
+        let sendSiteCookiesResponse = async () => {
+            // Restore cblk_hconsent if the SW was restarted and the in-memory
+            // variable reverted to undefined (same pattern as handleCookie:581).
+            await maybeRestoreCBLKVar(cblk_hconsent, "cblk_hconsent");
+
+            // If historyDB is still undefined after the outer ensureInitialized()
+            // call (e.g. a cold SW wake-up that somehow skipped init), attempt to
+            // open it now — mirrors ensureInitialized() step 4 (openHistoryDB()).
+            if (historyDB === undefined) {
+                try {
+                    await openHistoryDB();
+                } catch (err) {
+                    console.error("get_site_cookies: could not open historyDB:", err);
+                    sendResponse({response: []});
+                    return;
+                }
+            }
+
+            // Return empty array silently if history storage is disabled.
+            if (historyDB === undefined || !cblk_hconsent) {
+                sendResponse({response: []});
+                return;
+            }
+            let targetDomain = urlToUniformDomain(request.get_site_cookies);
+
+            let objectStore = historyDB.transaction("cookies").objectStore("cookies");
+            let cursor = objectStore.index("domain").openCursor();
+            let results = [];
+            cursor.onsuccess = function(event) {
+                let cur = event.target.result;
+                if (cur) {
+                    let storedNorm = urlToUniformDomain(cur.value.domain);
+                    if (storedNorm === targetDomain) {
+                        results.push({
+                            name: cur.value.name,
+                            category: classIndexToString(cur.value.current_label),
+                            current_label: cur.value.current_label
+                        });
+                    }
+                    cur.continue();
+                } else {
+                    sendResponse({response: results});
+                }
+            };
+            cursor.onerror = function(event) {
+                console.error("get_site_cookies cursor error: " + event.target.errorCode);
+                sendResponse({response: []});
+            };
+        };
+        sendSiteCookiesResponse();
+        return true;
     } else if (request.reset_defaults) {
         overrideDefaults();
         sendResponse({response: "Defaults overridden by BG."});
