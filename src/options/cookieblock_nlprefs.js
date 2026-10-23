@@ -10,82 +10,53 @@ Released under the MIT License, see included LICENSE file.
 
 // ── DOM element references ────────────────────────────────────────────────────
 
-const nlprefsTextarea   = document.getElementById("nlprefs-textarea");
-const nlprefsGenBtn     = document.getElementById("nlprefs-generate-btn");
-const nlprefsLoading    = document.getElementById("nlprefs-loading");
-const nlprefsError      = document.getElementById("nlprefs-error");
-const nlprefsResults    = document.getElementById("nlprefs-results");
-const nlprefsBadgeFunc  = document.getElementById("nlprefs-badge-func");
-const nlprefsBadgeAnal  = document.getElementById("nlprefs-badge-anal");
-const nlprefsBadgeAdvert= document.getElementById("nlprefs-badge-advert");
-const nlprefsExplanation= document.getElementById("nlprefs-explanation");
-const nlprefsApplyBtn   = document.getElementById("nlprefs-apply-btn");
-const nlprefsDiscardBtn = document.getElementById("nlprefs-discard-btn");
-const nlprefsConfirm    = document.getElementById("nlprefs-confirm");
-
-// ── Module-level state ────────────────────────────────────────────────────────
-
-/** The last validated proposal returned by the model, or null. */
-let currentProposal = null;
+const nlprefsTextarea = document.getElementById("nlprefs-textarea");
+const nlprefsSetBtn   = document.getElementById("nlprefs-set-btn");
+const nlprefsAskBtn   = document.getElementById("nlprefs-ask-btn");
+const nlprefsLoading  = document.getElementById("nlprefs-loading");
+const nlprefsLog      = document.getElementById("nlprefs-log");
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const OLLAMA_URL  = "http://localhost:11434/api/chat";
 const MODEL_NAME  = "llama3.2:latest";
 
-const SYSTEM_PROMPT = "You configure a browser cookie-consent tool. Decide which cookie categories to ALLOW (true) or BLOCK (false):\n- functionality: preferences, language, UI settings, convenience features\n- analytics: usage statistics and site performance measurement\n- advertising: ad targeting, personalized ads, cross-site tracking\nStrictly-necessary cookies are always allowed; do not output them.\n\nEvaluate each of the three categories independently based on what the user actually said. Do not assume a category is blocked just because another category was mentioned or blocked.\n\nRules:\n1. \"Maximum privacy\", \"block everything\", \"block all\", or any request to keep only what's required/necessary/essential means all three are false.\n2. If the user wants personalized or relevant ads, advertising is true. This does not by itself say anything about functionality or analytics.\n3. If the user says they accept or don't mind a category, that category is true.\n4. If a category is not mentioned and not covered by rule 1, default it to false only if the overall request leans toward privacy; otherwise leave it true.\n5. If the request is not about cookies or privacy, set understood=false and all three false.\n6. If the request contradicts itself, set understood=false and describe the conflict in the explanation.\n7. The explanation is one short sentence, specific to this request, that exactly matches the booleans you chose.";
+/**
+ * System prompt for the "Set Preferences" mode.
+ * The model must return structured JSON with exactly the schema specified in
+ * the request's `format` field.
+ */
+const SYSTEM_PROMPT = "You configure a browser cookie-consent tool. Decide which cookie categories to ALLOW (true) or BLOCK (false):\n- functionality: preferences, language, UI settings, convenience features\n- analytics: usage statistics and site performance measurement\n- advertising: ad targeting, personalized ads, cross-site tracking\nStrictly-necessary cookies are always allowed; do not output them.\n\nThe user's current CookieBlock settings may be provided as context. They are for reference only — always derive your output solely from what the user is now asking for; do not default to preserving the current settings.\n\nEvaluate each of the three categories independently based on what the user actually said. Do not assume a category is blocked just because another category was mentioned or blocked.\n\nRules:\n1. \"Maximum privacy\", \"block everything\", \"block all\", or any request to keep only what's required/necessary/essential means all three are false.\n2. If the user wants personalized or relevant ads, advertising is true. This does not by itself say anything about functionality or analytics.\n3. If the user says they accept or don't mind a category, that category is true.\n4. If a category is not mentioned and not covered by rule 1, default it to false only if the overall request leans toward privacy; otherwise leave it true.\n5. If the request is not about cookies or privacy, set understood=false and all three false.\n6. If the request contradicts itself, set understood=false and describe the conflict in the explanation.\n7. The explanation is one short sentence, specific to this request, that exactly matches the booleans you chose.";
+
+/**
+ * System prompt for the "Ask" mode.
+ * Plain-text, no structured output.  The model should draw on the site-cookie
+ * context prepended to the user message when available, and say plainly when
+ * it doesn't have enough information rather than guessing.
+ */
+const EXPLAIN_SYSTEM_PROMPT = "You are a privacy assistant embedded in the CookieBlock browser extension. Answer the user's question about cookies, cookie categories, or web privacy in clear, plain language that a non-technical person can understand. When a list of cookies currently set on the user's site is provided at the top of the message, use it to give a specific, relevant answer. Note: when a category is blocked in the user's current settings, CookieBlock prevents new or re-set cookies in that category from being kept, but it does not immediately delete cookies already stored in the browser. If asked about cookies that are both currently present and in a blocked category, explain both facts clearly: the cookie is already present in storage, but future additions or updates in that category will be blocked; existing ones remain until they expire or are re-set. If you do not have enough information to answer accurately, say so plainly — do not guess or fabricate cookie purposes. Keep answers concise: 1–3 short paragraphs at most.";
 
 // ── Helper: show/hide a DOM element ──────────────────────────────────────────
 
 function show(el) { el.hidden = false; }
 function hide(el) { el.hidden = true; }
 
-// ── Helper: update a read-only badge ─────────────────────────────────────────
+// ── Helper: disable / enable both submit buttons ──────────────────────────────
 
-/**
- * Set a badge element to ON or OFF state.
- * @param {HTMLElement} badge  The .nlprefs-badge element.
- * @param {boolean}     value  true = ON, false = OFF.
- */
-function setBadge(badge, value) {
-    if (value) {
-        badge.textContent = "ON";
-        badge.className   = "nlprefs-badge on";
+function setBusy(busy) {
+    nlprefsSetBtn.disabled = busy;
+    nlprefsAskBtn.disabled = busy;
+    if (busy) {
+        show(nlprefsLoading);
     } else {
-        badge.textContent = "OFF";
-        badge.className   = "nlprefs-badge off";
+        hide(nlprefsLoading);
     }
-}
-
-// ── Helper: show an error and hide the results area ──────────────────────────
-
-/**
- * Display an error message, hide results, and re-enable the UI for a retry.
- * @param {string} msg  Human-readable error text.
- */
-function showError(msg) {
-    nlprefsError.textContent = msg;
-    show(nlprefsError);
-    hide(nlprefsResults);
-    hide(nlprefsLoading);
-    nlprefsGenBtn.disabled  = false;
-    nlprefsApplyBtn.disabled = true;
-    currentProposal = null;
-}
-
-// ── Helper: clear any previous error/confirm state ───────────────────────────
-
-function clearFeedback() {
-    hide(nlprefsError);
-    hide(nlprefsConfirm);
-    nlprefsError.textContent   = "";
-    nlprefsConfirm.textContent = "";
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
 /**
- * Defensively validate an object returned by the model.
+ * Defensively validate an object returned by the model in Set Preferences mode.
  * Returns true only if every required field is present and correctly typed.
  * @param {*} obj   Parsed JSON value to validate.
  * @returns {boolean}
@@ -100,185 +71,80 @@ function isValidProposal(obj) {
     return true;
 }
 
-// ── "Generate" click handler ──────────────────────────────────────────────────
+// ── Helper: build an ON/OFF badge element ─────────────────────────────────────
 
-nlprefsGenBtn.addEventListener("click", async () => {
-    const userText = nlprefsTextarea.value.trim();
-    if (!userText) {
-        showError("Please describe your preferences before generating a suggestion.");
-        return;
-    }
+/**
+ * Create a badge <span> showing ON (green) or OFF (red).
+ * @param {boolean} value
+ * @returns {HTMLSpanElement}
+ */
+function makeBadge(value) {
+    const span = document.createElement("span");
+    span.className   = "nlprefs-badge " + (value ? "on" : "off");
+    span.textContent = value ? "ON" : "OFF";
+    return span;
+}
 
-    // Reset UI to loading state
-    clearFeedback();
-    hide(nlprefsResults);
-    nlprefsGenBtn.disabled = true;
-    show(nlprefsLoading);
-    currentProposal = null;
+// ── Chat log helpers ──────────────────────────────────────────────────────────
 
-    // Retrieve classified cookies for the current website tab (if available).
-    let siteCookies = [];
-    try {
-        siteCookies = await getCurrentSiteCookies();
-    } catch (err) {
-        // Degrade gracefully if query fails — continue without site context
-        console.warn("[CookieBlock NL Prefs] Could not retrieve site cookies:", err);
-    }
+/**
+ * Append a user message bubble to the chat log.
+ * @param {string} labelText  e.g. "You requested:" / "You asked:"
+ * @param {string} bodyText   The raw text the user typed.
+ * @returns {HTMLElement}  The outer entry div (used to attach the assistant bubble).
+ */
+function appendUserBubble(labelText, bodyText) {
+    const entry = document.createElement("div");
+    entry.className = "nlp-entry";
 
-    let userPrompt = userText;
-    if (Array.isArray(siteCookies) && siteCookies.length > 0) {
-        // Deduplicate by (name, category) pair:
-        // In IndexedDB, records can exist for the same cookie name across different
-        // paths (e.g. '/' vs '/sub') or subdomain scopes. Deduplicating by (name, category)
-        // prevents redundant lines from crowding the prompt and filling the cap.
-        const seen = new Set();
-        const uniqueCookies = [];
-        for (const c of siteCookies) {
-            if (!c || !c.name || !c.category) continue;
-            const key = `${c.name}:${c.category}`;
-            if (!seen.has(key)) {
-                seen.add(key);
-                uniqueCookies.push(c);
-            }
-        }
+    const userBubble = document.createElement("div");
+    userBubble.className = "nlp-user-bubble";
 
-        if (uniqueCookies.length > 0) {
-            // Cap at 30 cookies: 111+ cookies would overwhelm a 3B model's context budget
-            // and attention window. 30 provides representative site context without token bloat.
-            const MAX_CONTEXT_COOKIES = 30;
-            const capped = uniqueCookies.slice(0, MAX_CONTEXT_COOKIES);
-            const cookieLines = capped.map((c) => `${c.name}: ${c.category}`).join("\n");
-            userPrompt = `Cookies currently set on this site:\n${cookieLines}\n\nUser request: ${userText}`;
-        }
-    }
+    const label = document.createElement("span");
+    label.className   = "nlp-user-label";
+    label.textContent = labelText;
 
-    const requestBody = {
-        model: MODEL_NAME,
-        stream: false,
-        format: {
-            type: "object",
-            properties: {
-                understood:    { type: "boolean" },
-                functionality: { type: "boolean" },
-                analytics:     { type: "boolean" },
-                advertising:   { type: "boolean" },
-                explanation:   { type: "string"  }
-            },
-            required: ["understood", "functionality", "analytics", "advertising", "explanation"]
-        },
-        options: { temperature: 0 },
-        messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user",   content: userPrompt }
-        ]
-    };
+    const text = document.createElement("div");
+    text.className   = "nlp-user-text";
+    text.textContent = bodyText;
 
-    let outerJson;
-    try {
-        console.log("[CookieBlock NL Prefs] Final userPrompt sent to model:\n" + userPrompt);
-        const response = await fetch(OLLAMA_URL, {
-            method:  "POST",
-            headers: { "Content-Type": "application/json" },
-            body:    JSON.stringify(requestBody)
-        });
+    userBubble.appendChild(label);
+    userBubble.appendChild(text);
+    entry.appendChild(userBubble);
+    nlprefsLog.appendChild(entry);
 
-        if (!response.ok) {
-            showError(`Could not reach the local AI model. Is it running? (HTTP ${response.status})`);
-            return;
-        }
+    // Scroll newly appended message into view
+    entry.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
-        outerJson = await response.json();
-    } catch (networkErr) {
-        showError("Could not reach the local AI model. Is it running?");
-        return;
-    } finally {
-        hide(nlprefsLoading);
-        nlprefsGenBtn.disabled = false;
-    }
+    return entry;
+}
 
-    // Ollama returns the structured output as a JSON *string* inside message.content
-    const rawContent = outerJson?.message?.content;
-    if (typeof rawContent !== "string") {
-        showError("Could not generate a valid suggestion. Please try rephrasing.");
-        return;
-    }
+/**
+ * Append an assistant bubble (of any type) to an existing entry element.
+ * @param {HTMLElement} entry       The entry div returned by appendUserBubble.
+ * @param {HTMLElement} bubbleBody  The element to place inside the bubble.
+ * @param {boolean}     isError     If true, adds the nlp-error class.
+ * @returns {HTMLElement}  The assistant bubble element.
+ */
+function appendAssistantBubble(entry, bubbleBody, isError = false) {
+    const bubble = document.createElement("div");
+    bubble.className = "nlp-assistant-bubble" + (isError ? " nlp-error" : "");
+    bubble.appendChild(bubbleBody);
+    entry.appendChild(bubble);
+    bubble.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return bubble;
+}
 
-    let proposal;
-    try {
-        proposal = JSON.parse(rawContent);
-    } catch (parseErr) {
-        showError("Could not generate a valid suggestion. Please try rephrasing.");
-        return;
-    }
+/**
+ * Append a plain error message as an assistant bubble.
+ */
+function appendErrorBubble(entry, msg) {
+    const p = document.createElement("p");
+    p.textContent = msg;
+    appendAssistantBubble(entry, p, /* isError= */ true);
+}
 
-    if (!isValidProposal(proposal)) {
-        showError("Could not generate a valid suggestion. Please try rephrasing.");
-        return;
-    }
-
-    // Proposal is structurally valid — display it
-    currentProposal = proposal;
-
-    setBadge(nlprefsBadgeFunc,   proposal.functionality);
-    setBadge(nlprefsBadgeAnal,   proposal.analytics);
-    setBadge(nlprefsBadgeAdvert, proposal.advertising);
-
-    let explanationText = proposal.explanation.trim();
-    if (!proposal.understood) {
-        explanationText = "I wasn't fully sure I understood — here's my best guess: " + explanationText;
-    }
-    nlprefsExplanation.textContent = explanationText;
-
-    // Enable Apply only for a valid, structurally sound proposal (even if understood=false)
-    nlprefsApplyBtn.disabled = false;
-    hide(nlprefsConfirm);
-
-    show(nlprefsResults);
-});
-
-// ── "Apply" click handler ─────────────────────────────────────────────────────
-
-nlprefsApplyBtn.addEventListener("click", async () => {
-    if (!currentProposal) return;
-
-    try {
-        // Read the current policy first to avoid clobbering index 0 (necessary cookies)
-        let policy = await getStorageValue(chrome.storage.sync, "cblk_userpolicy");
-
-        // Construct the new policy, preserving index 0 (always true — necessary)
-        policy[0] = true;
-        policy[1] = currentProposal.functionality;
-        policy[2] = currentProposal.analytics;
-        policy[3] = currentProposal.advertising;
-
-        // Write back using the same pattern as cookieblock_options.js
-        setStorageValue(policy, chrome.storage.sync, "cblk_userpolicy");
-
-        // Show confirmation and clear proposal state
-        show(nlprefsConfirm);
-        nlprefsConfirm.textContent = "\u2714 Preferences applied";
-
-        // Clear the proposal so Apply cannot be double-clicked
-        currentProposal = null;
-        nlprefsApplyBtn.disabled = true;
-    } catch (err) {
-        showError("Failed to save preferences. Please try again.");
-        console.error("[CookieBlock NL Prefs] Apply failed:", err);
-    }
-});
-
-// ── \"Discard\" click handler ───────────────────────────────────────────────────
-
-nlprefsDiscardBtn.addEventListener("click", () => {
-    currentProposal = null;
-    hide(nlprefsResults);
-    clearFeedback();
-    nlprefsApplyBtn.disabled = true;
-    nlprefsGenBtn.disabled   = false;
-    // Leave the textarea contents intact so the user can adjust and retry
-});
-
-// ── Per-site cookie context ───────────────────────────────────────────────────
+// ── Site-cookie context helpers ───────────────────────────────────────────────
 
 /**
  * Identify the best candidate website tab to use as the cookie-query context.
@@ -404,3 +270,354 @@ const getCurrentSiteCookies = function() {
         });
     });
 };
+
+/**
+ * Fetch classified cookies from the service worker and build a context block
+ * to prepend to the user's prompt.
+ *
+ * Shared by both "Set Preferences" and "Ask" handlers.
+ *
+ * Deduplication by (name, category): IndexedDB records can exist for the same
+ * cookie name across different paths (e.g. '/' vs '/sub') or subdomain scopes.
+ * Deduplicating prevents redundant lines from crowding the prompt context.
+ *
+ * Cap at 30: 111+ cookies would overwhelm a 3B model's context budget and
+ * attention window.  30 entries provide representative site context without
+ * token bloat.
+ *
+ * @param {string} userText  The raw text the user typed.
+ * @returns {Promise<string>}  The user prompt string, with cookie context prepended
+ *                             if data is available, or just userText if not.
+ */
+const buildUserPrompt = async function(userText) {
+    // ── 1. Read current policy state ─────────────────────────────────────────
+    // Gracefully degrade if read fails or returns an unexpected value.
+    // Policy array: [0]=Necessary (always on), [1]=Functionality,
+    //               [2]=Analytics, [3]=Advertising
+    const POLICY_LABELS = [null, "Functionality", "Analytics", "Advertising"];
+    let policyLine = "";
+    try {
+        const policy = await getStorageValue(chrome.storage.sync, "cblk_userpolicy");
+        if (Array.isArray(policy) && policy.length >= 4) {
+            const parts = POLICY_LABELS
+                .map((label, i) => label ? `${label}=${policy[i] ? "ALLOWED" : "BLOCKED"}` : null)
+                .filter(Boolean);
+            policyLine = `Current CookieBlock settings: ${parts.join(", ")}`;
+        }
+    } catch (err) {
+        // Non-fatal — omit the policy line if storage read fails
+        console.warn("[CookieBlock NL Prefs] Could not read cblk_userpolicy:", err);
+    }
+
+    // ── 2. Read site cookies ──────────────────────────────────────────────────
+    let siteCookies = [];
+    try {
+        siteCookies = await getCurrentSiteCookies();
+    } catch (err) {
+        // Degrade gracefully — continue without site context
+        console.warn("[CookieBlock NL Prefs] Could not retrieve site cookies:", err);
+    }
+
+    // ── 3. Assemble prompt ────────────────────────────────────────────────────
+    // If neither policy nor cookie context is available, return bare userText.
+    const hasCookies = Array.isArray(siteCookies) && siteCookies.length > 0;
+    if (!policyLine && !hasCookies) {
+        return userText;
+    }
+
+    const parts = [];
+
+    if (policyLine) {
+        parts.push(policyLine);
+    }
+
+    if (hasCookies) {
+        // Deduplicate by (name, category) pair
+        const seen = new Set();
+        const uniqueCookies = [];
+        for (const c of siteCookies) {
+            if (!c || !c.name || !c.category) continue;
+            const key = `${c.name}:${c.category}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                uniqueCookies.push(c);
+            }
+        }
+
+        if (uniqueCookies.length > 0) {
+            const MAX_CONTEXT_COOKIES = 30;
+            const capped      = uniqueCookies.slice(0, MAX_CONTEXT_COOKIES);
+            const cookieLines = capped.map((c) => `${c.name}: ${c.category}`).join("\n");
+            parts.push(`Cookies currently set on this site:\n${cookieLines}`);
+        }
+    }
+
+    parts.push(`User request: ${userText}`);
+    return parts.join("\n\n");
+};
+
+// ── Apply a proposal to chrome.storage ───────────────────────────────────────
+
+/**
+ * Write a validated policy proposal to chrome.storage.sync.
+ * @param {Object} proposal  A validated proposal object.
+ */
+const applyProposal = async function(proposal) {
+    // Read the current policy first to avoid clobbering index 0 (necessary cookies)
+    let policy = await getStorageValue(chrome.storage.sync, "cblk_userpolicy");
+
+    // Index 0 is "necessary" — always true, never changed by NL prefs
+    policy[0] = true;
+    policy[1] = proposal.functionality;
+    policy[2] = proposal.analytics;
+    policy[3] = proposal.advertising;
+
+    // Write back using the same pattern as cookieblock_options.js
+    setStorageValue(policy, chrome.storage.sync, "cblk_userpolicy");
+};
+
+// ── "Set Preferences" handler ─────────────────────────────────────────────────
+
+nlprefsSetBtn.addEventListener("click", async () => {
+    const userText = nlprefsTextarea.value.trim();
+    if (!userText) return;
+
+    nlprefsTextarea.value = "";
+    setBusy(true);
+
+    // Append user message bubble immediately so the UI feels responsive
+    const entry = appendUserBubble("You requested:", userText);
+
+    let userPrompt;
+    try {
+        userPrompt = await buildUserPrompt(userText);
+    } finally {
+        // buildUserPrompt never throws, but guard defensively
+    }
+
+    const requestBody = {
+        model: MODEL_NAME,
+        stream: false,
+        format: {
+            type: "object",
+            properties: {
+                understood:    { type: "boolean" },
+                functionality: { type: "boolean" },
+                analytics:     { type: "boolean" },
+                advertising:   { type: "boolean" },
+                explanation:   { type: "string"  }
+            },
+            required: ["understood", "functionality", "analytics", "advertising", "explanation"]
+        },
+        options: { temperature: 0 },
+        messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user",   content: userPrompt }
+        ]
+    };
+
+    let outerJson;
+    try {
+        const response = await fetch(OLLAMA_URL, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            appendErrorBubble(entry, `Could not reach the local AI model. Is it running? (HTTP ${response.status})`);
+            return;
+        }
+
+        outerJson = await response.json();
+    } catch (networkErr) {
+        appendErrorBubble(entry, "Could not reach the local AI model. Is it running?");
+        return;
+    } finally {
+        setBusy(false);
+    }
+
+    // Ollama returns structured output as a JSON *string* inside message.content
+    const rawContent = outerJson?.message?.content;
+    if (typeof rawContent !== "string") {
+        appendErrorBubble(entry, "Could not generate a valid suggestion. Please try rephrasing.");
+        return;
+    }
+
+    let proposal;
+    try {
+        proposal = JSON.parse(rawContent);
+    } catch (parseErr) {
+        appendErrorBubble(entry, "Could not generate a valid suggestion. Please try rephrasing.");
+        return;
+    }
+
+    if (!isValidProposal(proposal)) {
+        appendErrorBubble(entry, "Could not generate a valid suggestion. Please try rephrasing.");
+        return;
+    }
+
+    // ── Build the policy bubble (badges + explanation + Apply/Discard) ────────
+
+    const bubbleContent = document.createElement("div");
+
+    // Badges grid
+    const grid = document.createElement("div");
+    grid.className = "nlp-policy-grid";
+
+    const rows = [
+        { label: "Functionality", value: proposal.functionality },
+        { label: "Analytics",     value: proposal.analytics     },
+        { label: "Advertising",   value: proposal.advertising   }
+    ];
+    for (const { label, value } of rows) {
+        const row = document.createElement("div");
+        row.className = "nlp-policy-row";
+
+        const lbl = document.createElement("span");
+        lbl.className   = "nlp-policy-label";
+        lbl.textContent = label;
+
+        row.appendChild(lbl);
+        row.appendChild(makeBadge(value));
+        grid.appendChild(row);
+    }
+    bubbleContent.appendChild(grid);
+
+    // Explanation text — attached directly to the bubble, not floating outside
+    const explanationEl = document.createElement("p");
+    explanationEl.className = "nlp-explanation";
+
+    if (!proposal.understood) {
+        const uncertain = document.createElement("span");
+        uncertain.className   = "nlp-uncertain-note";
+        uncertain.textContent = "I wasn't fully sure I understood — here's my best guess: ";
+        explanationEl.appendChild(uncertain);
+    }
+
+    // Safe: textContent used, not innerHTML
+    explanationEl.appendChild(document.createTextNode(proposal.explanation.trim()));
+    bubbleContent.appendChild(explanationEl);
+
+    // Apply / Discard buttons — scoped to this specific proposal via closure.
+    // Each message in the log has its own copy of `proposal`; clicking Apply on
+    // an older entry only applies that entry's values, not any later proposal.
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "nlp-policy-actions";
+
+    const applyBtn   = document.createElement("button");
+    applyBtn.className   = "nlp-apply-btn";
+    applyBtn.textContent = "Apply";
+    applyBtn.type        = "button";
+
+    const discardBtn   = document.createElement("button");
+    discardBtn.className   = "nlp-discard-btn";
+    discardBtn.textContent = "Discard";
+    discardBtn.type        = "button";
+
+    // Track resolved state locally — no shared global needed
+    let resolved = false;
+
+    const resolveActions = (confirmedText) => {
+        if (resolved) return;
+        resolved = true;
+        // Replace buttons with a status note
+        actionsEl.replaceChildren();
+        const note = document.createElement("span");
+        note.className   = confirmedText ? "nlp-confirmed-note" : "nlp-resolved-note";
+        note.textContent = confirmedText || "Discarded.";
+        actionsEl.appendChild(note);
+    };
+
+    applyBtn.addEventListener("click", async () => {
+        if (resolved) return;
+        try {
+            await applyProposal(proposal);
+            resolveActions("✔ Preferences applied");
+        } catch (err) {
+            console.error("[CookieBlock NL Prefs] Apply failed:", err);
+            resolveActions(null);
+            // Show a small inline error note
+            const errNote = document.createElement("span");
+            errNote.className   = "nlp-resolved-note";
+            errNote.textContent = "⚠ Failed to save. Please try again.";
+            actionsEl.appendChild(errNote);
+        }
+    });
+
+    discardBtn.addEventListener("click", () => {
+        resolveActions(null);
+    });
+
+    actionsEl.appendChild(applyBtn);
+    actionsEl.appendChild(discardBtn);
+    bubbleContent.appendChild(actionsEl);
+
+    appendAssistantBubble(entry, bubbleContent);
+});
+
+// ── "Ask" handler ─────────────────────────────────────────────────────────────
+
+nlprefsAskBtn.addEventListener("click", async () => {
+    const userText = nlprefsTextarea.value.trim();
+    if (!userText) return;
+
+    nlprefsTextarea.value = "";
+    setBusy(true);
+
+    const entry = appendUserBubble("You asked:", userText);
+
+    let userPrompt;
+    try {
+        userPrompt = await buildUserPrompt(userText);
+    } finally {
+        // buildUserPrompt never throws, but guard defensively
+    }
+
+    // Ask mode: no `format` field — Ollama returns a plain chat completion.
+    // The response shape is identical (outerJson.message.content) but the
+    // content is a plain string, not JSON to parse.
+    const requestBody = {
+        model: MODEL_NAME,
+        stream: false,
+        options: { temperature: 0.3 },
+        messages: [
+            { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
+            { role: "user",   content: userPrompt }
+        ]
+    };
+
+    let outerJson;
+    try {
+        const response = await fetch(OLLAMA_URL, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            appendErrorBubble(entry, `Could not reach the local AI model. Is it running? (HTTP ${response.status})`);
+            return;
+        }
+
+        outerJson = await response.json();
+    } catch (networkErr) {
+        appendErrorBubble(entry, "Could not reach the local AI model. Is it running?");
+        return;
+    } finally {
+        setBusy(false);
+    }
+
+    const answerText = outerJson?.message?.content;
+    if (typeof answerText !== "string" || answerText.trim().length === 0) {
+        appendErrorBubble(entry, "The AI returned an empty response. Please try again.");
+        return;
+    }
+
+    // Render plain-text answer safely (textContent, never innerHTML)
+    const answerEl = document.createElement("div");
+    answerEl.className   = "nlp-answer-text";
+    answerEl.textContent = answerText.trim();
+
+    appendAssistantBubble(entry, answerEl);
+});

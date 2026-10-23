@@ -14,57 +14,185 @@ Released under the MIT License, see included LICENSE file.
     <style>
         /* ── NL-prefs-specific styles ───────────────────────────────────── */
 
-        #nlprefs-textarea {
-            width: 100%;
-            min-height: 5em;
-            max-width: 100%;
-            box-sizing: border-box;
-            font-size: 1em;
-            padding: .5em;
-            border: 1px solid #aaa;
-            border-radius: 3px;
-            resize: vertical;
+        /* Inherit the page's sans-serif everywhere in this panel */
+        #nlprefs-panel {
+            font-family: sans-serif;
         }
 
-        #nlprefs-generate-btn {
+        /* Input textarea — same font as page, no monospace default */
+        #nlprefs-textarea {
+            width: 100%;
+            min-height: 4.5em;
+            max-width: 100%;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 1em;
+            padding: .6em .75em;
+            border: 1px solid #bbb;
+            border-radius: 4px;
+            resize: vertical;
+            line-height: 1.5;
+            color: #222;
+        }
+
+        #nlprefs-textarea:focus {
+            outline: none;
+            border-color: #0055b3;
+            box-shadow: 0 0 0 2px rgba(0, 85, 179, 0.15);
+        }
+
+        /* Button row below textarea */
+        #nlprefs-btns {
+            display: flex;
+            align-items: center;
+            gap: .75em;
             margin-top: .75em;
+            flex-wrap: wrap;
+        }
+
+        #nlprefs-btns button {
+            padding: .45em 1.1em;
+            font-size: 1em;
+            border-radius: 4px;
+            border: 1px solid #0055b3;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        #nlprefs-set-btn {
+            background: #0055b3;
+            color: #fff;
+        }
+
+        #nlprefs-set-btn:hover:not(:disabled) {
+            background: #003d82;
+        }
+
+        #nlprefs-ask-btn {
+            background: #fff;
+            color: #0055b3;
+        }
+
+        #nlprefs-ask-btn:hover:not(:disabled) {
+            background: #e8f0fb;
+        }
+
+        #nlprefs-set-btn:disabled,
+        #nlprefs-ask-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         #nlprefs-loading {
-            display: inline-block;
-            margin-left: 1em;
             font-style: italic;
             color: #555;
-            vertical-align: middle;
+            font-size: .95em;
         }
 
-        /* results fieldset */
-        #nlprefs-results {
-            margin-top: 1.5em;
+        /* ── Chat message log ──────────────────────────────────────────── */
+
+        #nlprefs-log {
+            margin-top: 1.25em;
+            display: flex;
+            flex-direction: column;
+            gap: 1em;
+            max-height: 28em;
+            overflow-y: auto;
+            padding: .5em .25em;
+            /* subtle scroll indicator */
+            border-top: 1px solid #e0e0e0;
         }
 
-        /* toggle badges — read-only ON/OFF display */
-        .nlprefs-toggle-row {
+        /* Don't show the log border until there are messages */
+        #nlprefs-log:empty {
+            border-top: none;
+            margin-top: 0;
+        }
+
+        /* Individual message entry (pair of user + assistant) */
+        .nlp-entry {
+            display: flex;
+            flex-direction: column;
+            gap: .5em;
+        }
+
+        /* User bubble */
+        .nlp-user-bubble {
+            display: flex;
+            gap: .6em;
+            align-items: flex-start;
+        }
+
+        .nlp-user-label {
+            font-weight: bold;
+            color: #444;
+            font-size: .85em;
+            white-space: nowrap;
+            padding-top: .15em;
+            min-width: 7em;
+            text-align: right;
+        }
+
+        .nlp-user-text {
+            background: #f0f4ff;
+            border: 1px solid #c5d5f5;
+            border-radius: 6px;
+            padding: .5em .8em;
+            font-size: .95em;
+            color: #222;
+            line-height: 1.45;
+            flex: 1;
+            word-break: break-word;
+        }
+
+        /* Assistant bubble */
+        .nlp-assistant-bubble {
+            margin-left: 7.6em; /* align with user-text */
+            background: #f8f9fa;
+            border: 1px solid #dde;
+            border-radius: 6px;
+            padding: .65em .9em;
+            font-size: .95em;
+            color: #222;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        /* Error bubble */
+        .nlp-assistant-bubble.nlp-error {
+            background: #fff3f3;
+            border-color: #f5c6cb;
+            color: #721c24;
+            font-weight: bold;
+        }
+
+        /* ── Badges inside a policy bubble ─────────────────────────────── */
+
+        .nlp-policy-grid {
+            display: flex;
+            flex-direction: column;
+            gap: .45em;
+        }
+
+        .nlp-policy-row {
             display: flex;
             align-items: center;
-            margin-top: .75em;
-            margin-left: 1.25em;
-            gap: 1em;
+            gap: .75em;
         }
 
-        .nlprefs-toggle-label {
-            font-size: larger;
+        .nlp-policy-label {
             font-weight: bold;
-            min-width: 10em;
+            min-width: 8.5em;
+            font-size: .95em;
         }
 
         .nlprefs-badge {
             display: inline-block;
-            padding: .2em .7em;
+            padding: .15em .6em;
             border-radius: 3px;
             font-weight: bold;
-            font-size: 1em;
-            min-width: 3em;
+            font-size: .9em;
+            min-width: 2.8em;
             text-align: center;
         }
 
@@ -80,39 +208,76 @@ Released under the MIT License, see included LICENSE file.
             border: 1px solid #f5c6cb;
         }
 
-        /* explanation */
-        #nlprefs-explanation {
-            margin-top: 1em;
-            margin-left: 1.25em;
-            font-size: 1em;
+        /* Explanation text directly below badges, inside same bubble */
+        .nlp-explanation {
+            margin-top: .6em;
             font-style: italic;
-            color: #333;
+            color: #444;
+            font-size: .92em;
             line-height: 1.4;
         }
 
-        /* action buttons */
-        #nlprefs-actions {
-            margin-top: 1.5em;
-            margin-left: 1.25em;
-            display: flex;
-            gap: 1em;
-            align-items: center;
-        }
-
-        #nlprefs-apply-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        #nlprefs-confirm {
-            color: green;
+        .nlp-uncertain-note {
             font-weight: bold;
-            font-size: 1em;
+            font-style: normal;
+            color: #7a5200;
+            margin-bottom: .2em;
         }
 
-        /* error / network message */
-        #nlprefs-error {
+        /* Apply / Discard action row inside a policy bubble */
+        .nlp-policy-actions {
             margin-top: .75em;
+            display: flex;
+            gap: .6em;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .nlp-policy-actions button {
+            padding: .35em .9em;
+            font-size: .9em;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .nlp-apply-btn {
+            background: #0055b3;
+            color: #fff;
+            border: 1px solid #0055b3;
+        }
+
+        .nlp-apply-btn:hover:not(:disabled) {
+            background: #003d82;
+        }
+
+        .nlp-discard-btn {
+            background: #fff;
+            color: #555;
+            border: 1px solid #aaa;
+        }
+
+        .nlp-discard-btn:hover:not(:disabled) {
+            background: #f2f2f2;
+        }
+
+        /* Resolved state — buttons replaced by confirmation text */
+        .nlp-resolved-note {
+            font-size: .88em;
+            color: #555;
+            font-style: italic;
+        }
+
+        .nlp-confirmed-note {
+            font-size: .88em;
+            color: #155724;
+            font-weight: bold;
+        }
+
+        /* ── Plain-text Ask answer ──────────────────────────────────────── */
+
+        .nlp-answer-text {
+            white-space: pre-wrap;
         }
     </style>
 </head>
@@ -128,58 +293,31 @@ Released under the MIT License, see included LICENSE file.
 
 <div class="contents">
     <div class="settings_group">
-        <fieldset>
+        <fieldset id="nlprefs-panel">
             <legend>Natural-Language Preferences</legend>
             <div class="overview_description">
-                Describe your cookie preferences in plain English. The local AI model
-                will suggest which cookie categories to allow or block. Review the
-                suggestion carefully before applying &mdash; it does not take effect until
-                you click <strong>Apply</strong>.
+                Describe your cookie preferences or ask a question about cookies.
+                Use <strong>Set Preferences</strong> to have the AI suggest which cookie
+                categories to allow or block, or <strong>Ask</strong> to get a plain-language
+                explanation. The AI runs locally &mdash; your text never leaves your device.
             </div>
 
             <hr class="thin">
 
             <textarea
                 id="nlprefs-textarea"
-                placeholder='e.g. "I want maximum privacy — block everything except what the site needs to work."'
-                aria-label="Describe your cookie preferences"
+                placeholder='e.g. "Block everything except what the site needs." or "What does the _ga cookie do?"'
+                aria-label="Describe your cookie preferences or ask a question"
             ></textarea>
 
-            <div class="submit_field">
-                <button id="nlprefs-generate-btn" type="button">Generate suggestion</button>
-                <span id="nlprefs-loading" hidden aria-live="polite">&#8987; Thinking&hellip;</span>
+            <div id="nlprefs-btns">
+                <button id="nlprefs-set-btn"  type="button">Set Preferences</button>
+                <button id="nlprefs-ask-btn"  type="button">Ask</button>
+                <span   id="nlprefs-loading"  hidden aria-live="polite">&#8987; Thinking&hellip;</span>
             </div>
 
-            <!-- Error / network failure message -->
-            <div id="nlprefs-error" class="input-error-msg" hidden aria-live="assertive"></div>
-
-            <!-- Results area — hidden until a valid proposal is available -->
-            <fieldset id="nlprefs-results" hidden>
-                <legend>Suggested policy (preview &mdash; not yet applied)</legend>
-
-                <div class="nlprefs-toggle-row">
-                    <span class="nlprefs-toggle-label">Functionality</span>
-                    <span id="nlprefs-badge-func" class="nlprefs-badge off" aria-label="Functionality: OFF">OFF</span>
-                </div>
-
-                <div class="nlprefs-toggle-row">
-                    <span class="nlprefs-toggle-label">Analytics</span>
-                    <span id="nlprefs-badge-anal" class="nlprefs-badge off" aria-label="Analytics: OFF">OFF</span>
-                </div>
-
-                <div class="nlprefs-toggle-row">
-                    <span class="nlprefs-toggle-label">Advertising</span>
-                    <span id="nlprefs-badge-advert" class="nlprefs-badge off" aria-label="Advertising: OFF">OFF</span>
-                </div>
-
-                <div id="nlprefs-explanation"></div>
-
-                <div id="nlprefs-actions">
-                    <button id="nlprefs-apply-btn" type="button" disabled>Apply</button>
-                    <button id="nlprefs-discard-btn" type="button">Discard</button>
-                    <span id="nlprefs-confirm" hidden aria-live="polite">&#10004; Preferences applied</span>
-                </div>
-            </fieldset>
+            <!-- Scrolling chat-style message log — entries appended by JS -->
+            <div id="nlprefs-log" role="log" aria-live="polite" aria-label="Conversation log"></div>
 
         </fieldset>
     </div>
