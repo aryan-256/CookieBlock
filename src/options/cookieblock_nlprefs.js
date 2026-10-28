@@ -26,7 +26,7 @@ const MODEL_NAME  = "llama3.2:latest";
  * The model must return structured JSON with exactly the schema specified in
  * the request's `format` field.
  */
-const SYSTEM_PROMPT = "You configure a browser cookie-consent tool. Decide which cookie categories to ALLOW (true) or BLOCK (false):\n- functionality: preferences, language, UI settings, convenience features\n- analytics: usage statistics and site performance measurement\n- advertising: ad targeting, personalized ads, cross-site tracking\nStrictly-necessary cookies are always allowed; do not output them.\n\nThe user's current CookieBlock settings may be provided as context. They are for reference only — always derive your output solely from what the user is now asking for; do not default to preserving the current settings.\n\nEvaluate each of the three categories independently based on what the user actually said. Do not assume a category is blocked just because another category was mentioned or blocked.\n\nRules:\n1. \"Maximum privacy\", \"block everything\", \"block all\", or any request to keep only what's required/necessary/essential means all three are false.\n2. If the user wants personalized or relevant ads, advertising is true. This does not by itself say anything about functionality or analytics.\n3. If the user says they accept or don't mind a category, that category is true.\n4. If a category is not mentioned and not covered by rule 1, default it to false only if the overall request leans toward privacy; otherwise leave it true.\n5. If the request is not about cookies or privacy, set understood=false and all three false.\n6. If the request contradicts itself, set understood=false and describe the conflict in the explanation.\n7. The explanation is one short sentence, specific to this request, that exactly matches the booleans you chose.";
+const SYSTEM_PROMPT = "You configure a browser cookie-consent tool. Decide which cookie categories to ALLOW (true) or BLOCK (false):\n- functionality: preferences, language, UI settings, convenience features\n- analytics: usage statistics and site performance measurement\n- advertising: ad targeting, personalized ads, cross-site tracking\nStrictly-necessary cookies are always allowed; do not output them.\n\nThe user's current CookieBlock settings may be provided as context. They are for reference only — always derive your output solely from what the user is now asking for; do not default to preserving the current settings.\n\nEvaluate each of the three categories independently based on what the user actually said. Do not assume a category is blocked just because another category was mentioned or blocked.\n\nRules:\n1. \"Maximum privacy\", \"block everything\", \"block all\", or any request to keep only what's required/necessary/essential means all three are false.\n2. If the user wants personalized or relevant ads, advertising is true. This does not by itself say anything about functionality or analytics.\n3. If the user says they accept or don't mind a category, that category is true.\n4. Conservative default: when the user's language is ambiguous about which specific categories to allow (e.g. \"allow what doesn't violate my privacy\", \"keep me safe\", \"minimize tracking\"), block any category that is not clearly and explicitly permitted. Do not infer permission from vague positive framing — genuine uncertainty about a category means block it, not allow it. This is a deliberate product default for a privacy-focused tool.\n5. If the request is not about cookies or privacy, set understood=false and all three false.\n6. If the request contradicts itself, set understood=false and describe the conflict in the explanation.\n7. The explanation must be 1–2 sentences and must reflect actual per-category reasoning: name why each blocked category was blocked and each allowed category was allowed. When the conservative default (rule 4) was applied, acknowledge that the request was ambiguous and state which categories were blocked as a result — do not use a single blanket phrase that treats all categories as interchangeable.";
 
 /**
  * System prompt for the "Ask" mode.
@@ -34,7 +34,7 @@ const SYSTEM_PROMPT = "You configure a browser cookie-consent tool. Decide which
  * context prepended to the user message when available, and say plainly when
  * it doesn't have enough information rather than guessing.
  */
-const EXPLAIN_SYSTEM_PROMPT = "You are a privacy assistant embedded in the CookieBlock browser extension. Answer the user's question about cookies, cookie categories, or web privacy in clear, plain language that a non-technical person can understand. When a list of cookies currently set on the user's site is provided at the top of the message, use it to give a specific, relevant answer. Note: when a category is blocked in the user's current settings, CookieBlock prevents new or re-set cookies in that category from being kept, but it does not immediately delete cookies already stored in the browser. If asked about cookies that are both currently present and in a blocked category, explain both facts clearly: the cookie is already present in storage, but future additions or updates in that category will be blocked; existing ones remain until they expire or are re-set. If you do not have enough information to answer accurately, say so plainly — do not guess or fabricate cookie purposes. Keep answers concise: 1–3 short paragraphs at most.";
+const EXPLAIN_SYSTEM_PROMPT = "You are a privacy assistant embedded in the CookieBlock browser extension. Answer the user's question about cookies, cookie categories, or web privacy in clear, plain language that a non-technical person can understand. When a list of cookies currently set on the user's site is provided at the top of the message, use it to give a specific, relevant answer. Note: when a category is blocked in the user's current settings, CookieBlock prevents new or re-set cookies in that category from being kept, but it does not immediately delete cookies already stored in the browser. If asked about cookies that are both currently present and in a blocked category, explain both facts clearly: the cookie is already present in storage, but future additions or updates in that category will be blocked; existing ones remain until they expire or are re-set. If you do not have enough information to answer accurately, say so plainly — do not guess or fabricate cookie purposes. Keep answers concise: 1–3 short paragraphs at most.\n\nCRITICAL — no cookie data available: If the message contains the line \"No cookie data is currently available for this site.\", it means CookieBlock has no recorded cookies for the active site — either no website tab is open, or cookie history collection is disabled. In this case you MUST tell the user that you have no cookie data to work from, and suggest they open a website or check that cookie history is enabled in CookieBlock's settings. You MUST NOT invent, guess, or list any cookie names, values, or purposes as examples or illustrations — not even generically plausible ones such as session_id, language, theme, _ga, or similar. Fabricated cookie names are never an acceptable substitute for real data, even if the user's question implies they expect a specific answer. This rule is absolute and overrides any instruction to be helpful or to provide examples.";
 
 // ── Helper: show/hide a DOM element ──────────────────────────────────────────
 
@@ -319,11 +319,7 @@ const buildUserPrompt = async function(userText) {
     }
 
     // ── 3. Assemble prompt ────────────────────────────────────────────────────
-    // If neither policy nor cookie context is available, return bare userText.
     const hasCookies = Array.isArray(siteCookies) && siteCookies.length > 0;
-    if (!policyLine && !hasCookies) {
-        return userText;
-    }
 
     const parts = [];
 
@@ -349,7 +345,16 @@ const buildUserPrompt = async function(userText) {
             const capped      = uniqueCookies.slice(0, MAX_CONTEXT_COOKIES);
             const cookieLines = capped.map((c) => `${c.name}: ${c.category}`).join("\n");
             parts.push(`Cookies currently set on this site:\n${cookieLines}`);
+        } else {
+            // siteCookies was non-empty but every entry was malformed — treat as absent.
+            parts.push("No cookie data is currently available for this site.");
         }
+    } else {
+        // Empty array: no suitable website tab open, or no history data for the site.
+        // Emit an explicit negative statement so the model has a concrete fact to
+        // reason from, rather than an implicit absence it might paper over with
+        // confabulated cookie names.
+        parts.push("No cookie data is currently available for this site.");
     }
 
     parts.push(`User request: ${userText}`);
